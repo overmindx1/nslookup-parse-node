@@ -127,12 +127,12 @@ class xlsxHandle {
                 
                 try {
                     let geoip = reader.city(res[0]);
-                    let location = '';
-                    if(geoip?.city?.names['zh-CN'] !== undefined) {
-                        location = geoip.city.names['zh-CN'];
-                    } else {
-                        location = geoip.country.names['zh-CN']
-                    }
+                    let location = geoip.country.names['zh-CN'];
+                    // if(geoip?.city?.names['zh-CN'] !== undefined) {
+                    //     location = geoip.city.names['zh-CN'];
+                    // } else {
+                    //     location = geoip.country.names['zh-CN']
+                    // }
                     data = {
                         id: rec.id,
                         name: rec.name,
