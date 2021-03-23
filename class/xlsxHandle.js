@@ -1,7 +1,7 @@
 const dns = require('dns')
 const fs = require('fs');
 const Reader = require('@maxmind/geoip2-node').Reader;
-const dbBuffer = fs.readFileSync('./GeoLite2-City.mmdb');
+const dbBuffer = fs.readFileSync('./geoDatabase/GeoLite2-City.mmdb');
 const reader = Reader.openBuffer(dbBuffer);
 const XLSX = require('xlsx');
 
