@@ -13,6 +13,7 @@
     "csv": "^5.4.0",
     "csv-writer": "^1.6.0",
     "minimist": "^1.2.5",
+    "node-worker-threads-pool": "^1.5.0",
     "xlsx": "^0.16.9"
   }
 }

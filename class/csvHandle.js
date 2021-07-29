@@ -1,11 +1,7 @@
-const dns = require('dns')
-const fs = require('fs'); 
-const Reader = require('@maxmind/geoip2-node').Reader;
-const dbBuffer = fs.readFileSync('./geoDatabase/GeoLite2-City.mmdb');
-const reader = Reader.openBuffer(dbBuffer);
+const fs = require("fs");
 const parse = require('csv-parse');
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
-
+const { StaticPool } = require('node-worker-threads-pool');
 /**
  * csvHandle 使用 csv 的檔案 paser
  */
@@ -17,10 +13,10 @@ class csvHandle {
         } else {
             this.writeFilePath = writeFilePath;
         }
+        this.csvData = [];
         this.writeData = [];
         this.readFilePath = readFilePath;              
-        this.parser = parse({columns: true , delimiter: ','});
-        console.log(this.writeFilePath)
+        this.parser = parse({columns: true , delimiter: ',' , from : 1}); // 第二行開始
         this.csvWriter = createCsvWriter({
             path: this.writeFilePath,
             header: [
@@ -33,16 +29,19 @@ class csvHandle {
             ]
         });
 
+        // Worker Pool
+        this.workerPool = new StaticPool({
+            size: 5,
+            task: './workers/resolveWorker.js',
+            workerData: 'workerData!'
+        });
+        console.time("Array initialize");
+
         // 開始讀取檔案處理監聽
-        this.parser.on('readable' , async () => {
+        this.parser.on('readable' ,  () => {
             let record;
             while (record = this.parser.read()) {
-                // if( (dns.getServers()[0] !== record.dns_server) && record.dns_server !== '' ) {
-                //     dns.setServers([record.dns_server]);            
-                // }
-        
                 let rec = record;
-
                 // 去除大部分不合法的 domain 
                 try {
                     rec.domain = new URL(rec.domain).hostname
@@ -55,19 +54,28 @@ class csvHandle {
                         rec.domain = rec.domain.toString();
                     }
                 } 
-                
-                // 處理資料解析
-                let data = await this.dnsReolve(rec);
-                this.writeData.push(data);
-                console.log(data)
+                this.csvData.push(rec)
             }
         });
 
         // 處理結束監聽 然後寫檔
-        this.parser.on('end' , () => {   
-            setTimeout( () => {
-                this.csvWriter.writeRecords(this.writeData).then( () => console.log('wait to output file .... done ' + this.writeFilePath))
-            } , 3000)    
+        this.parser.on('end' , () => {  
+            // 處理資料解析
+            // 看共有多少Row
+            let totalRow = this.csvData.length;
+            this.csvData.map(rec => {
+                ( async () => {
+                    let {data} = await this.workerPool.exec({rec});
+                    this.writeData.push(data);
+                    if(this.writeData.length == totalRow) {
+                        this.writeData.sort((a , b) => {
+                            return a.id - b.id;
+                        })
+                        this.csvWriter.writeRecords(this.writeData).then( () => console.log('wait to output file .... done ' + this.writeFilePath))
+                        console.timeEnd("Array initialize");
+                    }
+                })();
+            });
         })
     }
 
@@ -76,61 +84,6 @@ class csvHandle {
      */
     run(){
         fs.createReadStream(this.readFilePath).pipe(this.parser);
-    }
-
-    /**
-     * 拿來解析 IP 跟拿來處理 GeoIp
-     * @param {Object} rec 
-     * @return Promise
-     */
-    dnsReolve(rec) {
-        return new Promise((resolve , reject) => {            
-            let data = {};
-            dns.resolve(rec.domain.toString(), (err, res) => {
-                if (err) {
-                    data = {
-                        id: rec.id,
-                        name: rec.name,
-                        domain: rec.domain,
-                        resolve: 'resolve_error',
-                        location: 'resolve_error'
-                    };
-                    resolve(data);
-                    return;
-                }
-                
-                try {
-                    let geoip = reader.city(res[0]);
-                    let location = geoip.country.names['zh-CN'];
-                    // if(geoip?.city?.names['zh-CN'] !== undefined) {
-                    //     location = geoip.city.names['zh-CN'];
-                    // } else {
-                    //     location = geoip.country.names['zh-CN'];
-                    // }
-                    
-                    data = {
-                        id: rec.id,
-                        name: rec.name,
-                        domain: rec.domain,
-                        resolve: res.join(','),
-                        location: location,
-                        note: res.length > 1 ? 'cdn' : ''
-                    };
-                    resolve(data);
-                } catch (error) {
-                    data = {
-                        id: rec.id,
-                        name: rec.name,
-                        domain: rec.domain,
-                        resolve: res.join(','),
-                        location: 'geoip can\'t resolve location ',
-                        note: res.length > 1 ? 'cdn' : ''
-                    };
-                    resolve(data);
-                }
-                return;
-            })
-        })
     }
 }
 

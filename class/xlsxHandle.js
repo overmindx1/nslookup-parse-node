@@ -1,10 +1,5 @@
-const dns = require('dns')
-const fs = require('fs');
-const Reader = require('@maxmind/geoip2-node').Reader;
-const dbBuffer = fs.readFileSync('./geoDatabase/GeoLite2-City.mmdb');
-const reader = Reader.openBuffer(dbBuffer);
 const XLSX = require('xlsx');
-
+const { StaticPool } = require('node-worker-threads-pool');
 /**
  * xlsx Handle 使用 Xlsx 的檔案 paser
  */
@@ -22,6 +17,9 @@ class xlsxHandle {
         } else {
             this.writeFilePath = writeFilePath;
         }
+        // 放下要待轉換的資料
+        this.excelData = [];
+        // 要輸出的資料
         this.writeData = [];
         this.readFilePath = readFilePath;
         let workbook = XLSX.readFile(this.readFilePath);
@@ -30,17 +28,21 @@ class xlsxHandle {
         this.sheet1 = workbook.Sheets[sheetNames[0]];
 
         this.range = XLSX.utils.decode_range(this.sheet1['!ref']);
-        
+        // Worker Pool
+        this.workerPool = new StaticPool({
+            size: 5,
+            task: './workers/resolveWorker.js',
+            workerData: 'workerData!'
+        });
+        console.time("Array initialize");
     }
 
     /**
      * 開始Parse 處理
      */
-    async run() {
-
-        // 找出最高的列
-        for (let R = this.range.s.r; R <= this.range.e.r; ++R) {
-            
+    run() {
+        // 找出最高的列 - 第一列不管
+        for (let R = this.range.s.r + 1; R <= this.range.e.r; ++R) {
             let rec = {};
             // 找出最多的行
             for (let C = this.range.s.c; C <= this.range.e.c; ++C) {
@@ -58,34 +60,41 @@ class xlsxHandle {
                         rec.domain = this.sheet1[cell] !== undefined ? this.sheet1[cell].v : '';
                         break;
                 }
-
             }
             // 去除大部分不合法的 domain 
             try {
                 rec.domain = new URL(rec.domain).hostname
             } catch (error) {
                 // 去除網址的 / 然後取得最前面的網域
-                let parse = rec.domain.toString().split('/');
-                if (parse.length > 1) {
-                    rec.domain = parse[0];
-                } else {
-                    rec.domain = rec.domain.toString();
+                if(rec.domain != undefined) {
+                    let parse = rec.domain.toString().split('/');
+                    if (parse.length > 1) {
+                        rec.domain = parse[0];
+                    } else {
+                        rec.domain = rec.domain.toString();
+                    }
                 }
             }
-
-            // 如果這列都沒有資料 就不進去解析
-            if( !(rec.domain == '' && rec.id == '' && rec.name == '') ) {
-                let data = await this.dnsReolve(rec);
-                this.writeData.push(data);
-                console.log(data)
-            }
-            
-            // 跑完最高列之後寫檔
-            if (this.range.e.r == R) {
-                this.writeXlsx()
+            // 正常的資料在寫入 待轉換陣列
+            if( !(rec.domain == '' && rec.id == '' && rec.name == '') && rec !== undefined) {
+                this.excelData.push(rec)
             }
         }
-        
+        // 看共有多少Row
+        let totalRow = this.excelData.length - 1;
+        // 丟進 Worker Pool 去跑資料
+        this.excelData.map( (rec) => {
+            ( async () => {
+                let {data} = await this.workerPool.exec({rec});
+                this.writeData.push(data);
+                if(this.writeData.length == totalRow) {
+                    this.writeData.sort((a , b) => {
+                        return a.id - b.id;
+                    })
+                    this.writeXlsx();
+                }
+            })()
+        });
     }
 
     /**
@@ -101,61 +110,7 @@ class xlsxHandle {
         };
         XLSX.writeFile(workBook, this.writeFilePath);
         console.log('done to output file .... ' + this.writeFilePath)
-    }
-
-    /**
-     * 拿來解析 IP 跟拿來處理 GeoIp
-     * @param {Object} rec 
-     * @return Promise
-     */
-    dnsReolve(rec) {
-        
-        return new Promise((resolve , reject) => {            
-            let data = {};
-            dns.resolve(rec.domain.toString(), (err, res) => {
-                if (err) {
-                    data = {
-                        id: rec.id,
-                        name: rec.name,
-                        domain: rec.domain,
-                        resolve: 'resolve_error',
-                        location: 'resolve_error'
-                    };
-                    resolve(data);
-                    return;
-                }
-                
-                try {
-                    let geoip = reader.city(res[0]);
-                    let location = geoip.country.names['zh-CN'];
-                    // if(geoip?.city?.names['zh-CN'] !== undefined) {
-                    //     location = geoip.city.names['zh-CN'];
-                    // } else {
-                    //     location = geoip.country.names['zh-CN']
-                    // }
-                    data = {
-                        id: rec.id,
-                        name: rec.name,
-                        domain: rec.domain,
-                        resolve: res.join(','),
-                        location: location,
-                        note: res.length > 1 ? 'cdn' : ''
-                    };
-                    resolve(data);
-                } catch (error) {
-                    data = {
-                        id: rec.id,
-                        name: rec.name,
-                        domain: rec.domain,
-                        resolve: res.join(','),
-                        location: 'geoip can\'t resolve location ',
-                        note: res.length > 1 ? 'cdn' : ''
-                    };
-                    resolve(data);
-                }
-                return;
-            })
-        })
+        console.timeEnd("Array initialize");
     }
 }
 
