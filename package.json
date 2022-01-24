@@ -4,6 +4,7 @@
   "description": "Nslookup Write to Csv or Xlsx File",
   "main": "index.js",
   "scripts": {
+    "buildTsc" : "tsc",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "Overmindx1",
@@ -15,5 +16,9 @@
     "minimist": "^1.2.5",
     "node-worker-threads-pool": "^1.5.0",
     "xlsx": "^0.16.9"
+  },
+  "devDependencies": {
+    "@types/node": "^17.0.10",
+    "typescript": "^4.5.5"
   }
 }
